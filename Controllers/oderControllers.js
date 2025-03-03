@@ -88,8 +88,16 @@ export const getOrder = async (req, res) => {
 };
 
 export const addCutSheet = async (req, res) => {
-  const { color, sizes, quantity, orderId, orderName, orderNumber } = req.body;
-
+  const {
+    color,
+    sizes,
+    quantity,
+    orderId,
+    orderName,
+    orderNumber,
+    shade,
+    lot,
+  } = req.body;
   if (!color || !sizes || !quantity) {
     return res
       .status(400)
@@ -138,6 +146,8 @@ export const addCutSheet = async (req, res) => {
       quantity,
       orderName,
       orderNumber,
+      shade,
+      lot,
       pieces: newPieces,
     };
 
@@ -220,7 +230,7 @@ export const generateOutputProductionReport = async (req, res) => {
 
             // Only consider pieces updated within the selected date
             if (updatedAt >= startOfDay && updatedAt <= endOfDay) {
-              const hour = updatedAt.getUTCHours(); 
+              const hour = updatedAt.getUTCHours();
               const hourRange = `${hour}:00-${hour}:59`;
               const line = piece.lineNumber;
 
@@ -298,6 +308,30 @@ export const getOrderStatusCountByDate = async (req, res) => {
     });
 
     res.json({ message: "Order Report", statusData });
+  } catch (error) {
+    console.error("Error in getOrderStatusCountByDate:", error);
+    res.status(500).json({ message: "Server Error" });
+  }
+};
+
+export const isTurePrint = async (req, res) => {
+  try {
+    const { id } = req.body; // Extract id from request body
+
+    const result = await Order.updateOne(
+      { "orderCutSheet._id": id },
+      { $set: { "orderCutSheet.$.isPrinted": true } }
+    );
+
+    if (result.modifiedCount > 0) {
+      return res
+        .status(200)
+        .json({ success: true, message: "Cut-Sheet marked as printed." });
+    } else {
+      return res
+        .status(404)
+        .json({ success: false, message: "Cut-Sheet not found." });
+    }
   } catch (error) {
     console.error("Error in getOrderStatusCountByDate:", error);
     res.status(500).json({ message: "Server Error" });

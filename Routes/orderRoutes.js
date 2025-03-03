@@ -1,5 +1,5 @@
 import express from "express";
-import { addCutSheet, addNewOrder, generateOutputProductionReport, getAllOrders, getOrder, getOrderStatusCountByDate } from "../Controllers/oderControllers.js";
+import { addCutSheet, addNewOrder, generateOutputProductionReport, getAllOrders, getOrder, getOrderStatusCountByDate, isTurePrint } from "../Controllers/oderControllers.js";
 import { verifyToken } from "../Middleware/verfiyToken.js";
 import { isCompanyOwner } from "../Middleware/isCompanyOwner.js";
 
@@ -12,5 +12,6 @@ orderRouter.get("/order/:id", getOrder);
 orderRouter.post("/add/new/cutsheet", addCutSheet);
 orderRouter.post("/producation/report", verifyToken,generateOutputProductionReport);
 orderRouter.get("/order/stauts/:id", getOrderStatusCountByDate);
+orderRouter.post("/add/isPrint",isTurePrint );
 
 export default orderRouter;

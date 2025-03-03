@@ -7,14 +7,6 @@ const pieceSchema = new mongoose.Schema(
       type: Number, // Unique ID for each piece
       required: true,
     },
-    sizes: {
-      type: String, // Size of the piece (e.g., M, L, XL, XXL)
-      required: true,
-    },
-    color: {
-      type: String,
-      required: true,
-    },
     status: {
       type: String, // Status of the piece
       required: true,
@@ -57,17 +49,16 @@ const pieceSchema = new mongoose.Schema(
 
 // Schema for cut sheets
 const orderCutSheetSchema = new mongoose.Schema({
-  orderName: {
+  lot: {
     type: String,
-    required: true,
-    default: "Untitled Form",
+   // required: true,
+  },
+  shade: {
+    type: String,
+    //required: true,
   },
   color: {
     type: String,
-    required: true,
-  },
-  orderNumber: {
-    type: Number,
     required: true,
   },
   quantity: {
@@ -80,6 +71,10 @@ const orderCutSheetSchema = new mongoose.Schema({
   },
   qrCode: {
     type: String,
+  },
+  isPrinted: {
+    type: Boolean,
+    default: false
   },
   pieces: [pieceSchema],
 });
@@ -114,10 +109,6 @@ const orderSchema = new mongoose.Schema(
       required: true,
     },
     sizes: {
-      type: [String], // Stores the available sizes in this order, e.g., ["M", "L", "XL", "XXL"]
-      required: true,
-    },
-    colous: {
       type: [String],
       required: true,
     },
