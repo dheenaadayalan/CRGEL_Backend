@@ -56,10 +56,12 @@ export const addNewOrder = async (req, res) => {
 export const getAllOrders = async (req, res) => {
   const companyId = req.user.companyID;
   try {
-    const allOrder = await Order.find({ companyId: companyId });
+    const allOrders = await Order.find({ companyId: companyId })
+      .select('_id orderNumber orderDiscription styleNumber orderQuantity totalQuantity')
+      .lean();
     res.json({
-      allOrder: allOrder,
-      message: "All orders feched",
+      allOrder: allOrders,
+      message: "All orders fetched",
     });
   } catch (error) {
     res.status(500).json({
@@ -216,38 +218,27 @@ export const generateOutputProductionReport = async (req, res) => {
       )
     );
 
-    const orders = await Order.find({ companyId }).lean(); // Fetch all orders for the company
+    const orders = await Order.find({ companyId }).lean(); 
 
-    let hourlyCount = {}; // Grouped by lineNumber
+    let hourlyCount = {}; 
     let dailyCount = 0;
 
     orders.forEach((order) => {
       order.orderCutSheet.forEach((cutSheet) => {
         cutSheet.pieces.forEach((piece) => {
           if (piece.status === status && piece.lineNumber) {
-            // Filter by selected status
             const updatedAt = new Date(piece.updatedAt);
-
-            // Only consider pieces updated within the selected date
             if (updatedAt >= startOfDay && updatedAt <= endOfDay) {
               const hour = updatedAt.getUTCHours();
               const hourRange = `${hour}:00-${hour}:59`;
               const line = piece.lineNumber;
-
-              // Ensure the line object exists
               if (!hourlyCount[line]) {
                 hourlyCount[line] = {};
               }
-
-              // Ensure the hour range exists for the line
               if (!hourlyCount[line][hourRange]) {
                 hourlyCount[line][hourRange] = 0;
               }
-
-              // Increment count for this hour range in this line
               hourlyCount[line][hourRange]++;
-
-              // Count daily production
               dailyCount++;
             }
           }
@@ -255,7 +246,6 @@ export const generateOutputProductionReport = async (req, res) => {
       });
     });
 
-    // Add total count for each lineNumber
     Object.keys(hourlyCount).forEach((line) => {
       const total = Object.values(hourlyCount[line]).reduce(
         (sum, count) => sum + count,
@@ -335,5 +325,101 @@ export const isTurePrint = async (req, res) => {
   } catch (error) {
     console.error("Error in getOrderStatusCountByDate:", error);
     res.status(500).json({ message: "Server Error" });
+  }
+};
+
+export const deleteOrderCutSheet = async (req, res) => {
+  console.log("its in back");
+
+  try {
+    const { orderId, cutSheetId } = req.params;
+
+    // Find the order and update by pulling the specific cut sheet
+    const updatedOrder = await Order.findByIdAndUpdate(
+      orderId,
+      { $pull: { orderCutSheet: { _id: cutSheetId } } },
+      { new: true }
+    );
+
+    if (!updatedOrder) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    res.status(200).json({ message: "Cut sheet deleted successfully", updatedOrder });
+  } catch (error) {
+    res.status(500).json({ message: "Error deleting cut sheet", error: error.message });
+  }
+};
+
+
+export const ledStatus = async (req, res) => {
+  try {
+    const now = new Date();
+
+    // Compute IST boundaries for today's output calculation using "en-CA" format
+    const istDateStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(now);
+    const startIST = new Date(`${istDateStr}T00:00:00+05:30`);
+    const endIST = new Date(`${istDateStr}T23:59:59.999+05:30`);
+
+    const ledStatusData = await Order.aggregate([
+      // Unwind orderCutSheet and its pieces array
+      { $unwind: "$orderCutSheet" },
+      { $unwind: "$orderCutSheet.pieces" },
+      // Group by the piece's lineNumber
+      {
+        $group: {
+          _id: "$orderCutSheet.pieces.lineNumber",
+          // Count input pieces (In-Line) without time restriction
+          input: {
+            $sum: {
+              $cond: [{ $eq: ["$orderCutSheet.pieces.status", "In-Line"] }, 1, 0]
+            }
+          },
+          // Count output pieces (Output) updated today (IST boundaries)
+          output: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ["$orderCutSheet.pieces.status", "Output"] },
+                    { $gte: ["$orderCutSheet.pieces.updatedAt", startIST] },
+                    { $lte: ["$orderCutSheet.pieces.updatedAt", endIST] }
+                  ]
+                },
+                1,
+                0
+              ]
+            }
+          }
+        }
+      },
+      // Project: Transform _id (lineNumber) by removing hyphens and converting to uppercase.
+      {
+        $project: {
+          lineNumber: {
+            $toUpper: {
+              $replaceAll: {
+                input: { $ifNull: ["$_id", ""] },
+                find: "-",
+                replacement: ""
+              }
+            }
+          },
+          input: 1,
+          output: 1,
+          _id: 0
+        }
+      },
+      // Exclude documents where lineNumber is an empty string
+      { $match: { lineNumber: { $ne: "" } } }
+    ]);
+
+    // Stringify the final response data and send it.
+    const jsonResponse = JSON.stringify({ data: ledStatusData });
+    res.status(200).send(jsonResponse);
+  } catch (error) {
+    res.status(500).send(
+      JSON.stringify({ message: "Error Getting status", error: error.message })
+    );
   }
 };

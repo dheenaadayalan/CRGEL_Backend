@@ -13,6 +13,14 @@ const pieceSchema = new mongoose.Schema(
       enum: ["Store", "In-Line", "Finishing", "In-Feeding", "Output"],
       default: "Store",
     },
+    sizes: {
+      type: String, // Size of the piece (e.g., M, L, XL, XXL)
+      required: true,
+    },
+    color: {
+      type: String,
+      required: true,
+    },
     lineNumber: {
       type: String,
       enum: [
@@ -51,7 +59,7 @@ const pieceSchema = new mongoose.Schema(
 const orderCutSheetSchema = new mongoose.Schema({
   lot: {
     type: String,
-   // required: true,
+    // required: true,
   },
   shade: {
     type: String,
@@ -74,10 +82,21 @@ const orderCutSheetSchema = new mongoose.Schema({
   },
   isPrinted: {
     type: Boolean,
-    default: false
+    default: false,
   },
   pieces: [pieceSchema],
 });
+
+const inputDataSchema = new mongoose.Schema(
+  {
+    M: { type: Number, default: 0 },
+    L: { type: Number, default: 0 },
+    XL: { type: Number, default: 0 },
+    XXL: { type: Number, default: 0 },
+    XXXL:{type: Number, default: 0}
+  },
+  { _id: false }
+);
 
 // Main order schema
 const orderSchema = new mongoose.Schema(
@@ -136,6 +155,16 @@ const orderSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       required: true,
       ref: "company",
+    },
+    inputData: {
+      type: Map,
+      of: new mongoose.Schema(
+        {
+          lineNumbers: { type: Map, of: inputDataSchema, default: {} },
+        },
+        { _id: false }
+      ),
+      default: {},
     },
   },
   { timestamps: true }

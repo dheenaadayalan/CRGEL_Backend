@@ -1,5 +1,5 @@
 import express from "express";
-import { addCutSheet, addNewOrder, generateOutputProductionReport, getAllOrders, getOrder, getOrderStatusCountByDate, isTurePrint } from "../Controllers/oderControllers.js";
+import { addCutSheet, addNewOrder, deleteOrderCutSheet, generateOutputProductionReport, getAllOrders, getOrder, getOrderStatusCountByDate, isTurePrint, ledStatus } from "../Controllers/oderControllers.js";
 import { verifyToken } from "../Middleware/verfiyToken.js";
 import { isCompanyOwner } from "../Middleware/isCompanyOwner.js";
 
@@ -13,5 +13,7 @@ orderRouter.post("/add/new/cutsheet", addCutSheet);
 orderRouter.post("/producation/report", verifyToken,generateOutputProductionReport);
 orderRouter.get("/order/stauts/:id", getOrderStatusCountByDate);
 orderRouter.post("/add/isPrint",isTurePrint );
+orderRouter.post("/led/status",ledStatus );
+//orderRouter.delete("/orders/:orderId/cutSheets/:cutSheetId", deleteOrderCutSheet);
 
 export default orderRouter;

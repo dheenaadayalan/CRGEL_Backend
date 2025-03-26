@@ -79,12 +79,51 @@ export const trayQrCode = async (req, res) => {
 
     if (!unassignedPiece) {
       return res.status(400).json({
-        message: "All pieces are already assigned with Tray. Scan new Cut Sheet",
+        message:
+          "All pieces are already assigned with Tray. Scan new Cut Sheet",
         success: false,
         color: "yellow",
         h: "सभी टुकड़े पहले से ही ट्रे के साथ निर्दिष्ट हैं। नई कट शीट स्कैन करें",
       });
     }
+
+    const date = new Date().toLocaleDateString("en-GB");
+    const pieceColor = unassignedPiece.color;
+    let pieceSize = unassignedPiece.sizes;
+
+    if (!pieceColor || !pieceSize) {
+      console.error("Error: pieceColor or pieceSize is undefined!");
+      return res.status(500).json({ message: "Invalid pieceColor or pieceSize", success: false });
+    }
+
+    if (pieceSize === "2XL") {
+      pieceSize = "XXL";
+    } else if (pieceSize === "3XL") {
+      pieceSize = "XXXL";
+    }
+
+    if (!(order.inputData instanceof Map)) {
+      order.inputData = new Map();
+    }
+
+    let dateData = order.inputData.get(date);
+    if (!dateData) {
+      dateData = { lineNumbers: new Map() };
+    } else if (!(dateData.lineNumbers instanceof Map)) {
+      dateData.lineNumbers = new Map(Object.entries(dateData.lineNumbers || {}));
+    }
+
+    let lineData = dateData.lineNumbers.get(lineNumber);
+    if (!lineData) {
+      lineData = { M: 0, L: 0, XL: 0, XXL: 0, XXXL: 0 };
+    }
+
+    lineData[pieceSize] = (lineData[pieceSize] || 0) + 1;
+
+    dateData.lineNumbers.set(lineNumber, lineData);
+    order.inputData.set(date, dateData);
+    order.markModified("inputData");
+
     unassignedPiece.trayQrCode = trayQrCode;
     unassignedPiece.status = status;
     unassignedPiece.lineNumber = lineNumber;
@@ -246,7 +285,7 @@ export const updateTrayOutput = async (req, res) => {
     if (!order) {
       return res.json({
         success: false,
-        message: "No order or cut sheet found containing the specified tray QR code.",
+        message: `No order or cut sheet found containing the specified tray QR code.${trayQrCode}`,
         color: "red",
         h: "निर्दिष्ट ट्रे क्यूआर कोड वाला कोई ऑर्डर या कट शीट नहीं मिली।",
       });
@@ -280,7 +319,7 @@ export const updateTrayOutput = async (req, res) => {
       success: true,
       message: "Tray scanned updated successfully.",
       color: "green",
-        h: "ट्रे स्कैन सफलतापूर्वक अपडेट किया गया।",
+      h: "ट्रे स्कैन सफलतापूर्वक अपडेट किया गया।",
     });
   } catch (err) {
     console.error("Error updating tray status:", err);
