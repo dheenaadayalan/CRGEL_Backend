@@ -26,6 +26,14 @@ app.get("/", (req, res) => {
   res.status(200).send("Hi welcome to CRGEL API");
 });
 
+// global error handler
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(err.statusCode || 500).json({
+    error: err.message || 'Internal Server Error'
+  });
+});
+
 app.use('/api', orderRouter)
 app.use('/api', authRouter)
 app.use('/api',qrCodeRouter)

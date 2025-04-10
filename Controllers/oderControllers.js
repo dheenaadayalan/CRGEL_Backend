@@ -2,6 +2,9 @@ import Order from "../Model/orderModel.js";
 import qrcode from "qrcode";
 import mongoose from "mongoose";
 
+const asyncHandler = fn => (req, res, next) =>
+  Promise.resolve(fn(req, res, next)).catch(next);
+
 export const addNewOrder = async (req, res) => {
   const companyId = req.user.companyID;
 
@@ -352,30 +355,38 @@ export const deleteOrderCutSheet = async (req, res) => {
 };
 
 
-export const ledStatus = async (req, res) => {
-  try {
-    const now = new Date();
+// simple in‐memory cache
+let _cachedJson = null;
+let _cacheTs = 0; // timestamp in ms
 
-    // Compute IST boundaries for today's output calculation using "en-CA" format
-    const istDateStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(now);
+export const ledStatus = asyncHandler(async (req, res) => {
+  try {
+    const now = Date.now();
+
+    // if we have cached data that's younger than 5 minutes, return it
+    if (_cachedJson && now - _cacheTs < 5 * 60 * 1000) {
+      return res.status(200).send(_cachedJson);
+    }
+
+    // otherwise recompute and update cache
+    const jsNow = new Date(now);
+    const istDateStr = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Kolkata",
+    }).format(jsNow);
     const startIST = new Date(`${istDateStr}T00:00:00+05:30`);
     const endIST = new Date(`${istDateStr}T23:59:59.999+05:30`);
 
     const ledStatusData = await Order.aggregate([
-      // Unwind orderCutSheet and its pieces array
       { $unwind: "$orderCutSheet" },
       { $unwind: "$orderCutSheet.pieces" },
-      // Group by the piece's lineNumber
       {
         $group: {
           _id: "$orderCutSheet.pieces.lineNumber",
-          // Count input pieces (In-Line) without time restriction
           input: {
             $sum: {
-              $cond: [{ $eq: ["$orderCutSheet.pieces.status", "In-Line"] }, 1, 0]
-            }
+              $cond: [{ $eq: ["$orderCutSheet.pieces.status", "In-Line"] }, 1, 0],
+            },
           },
-          // Count output pieces (Output) updated today (IST boundaries)
           output: {
             $sum: {
               $cond: [
@@ -383,17 +394,16 @@ export const ledStatus = async (req, res) => {
                   $and: [
                     { $eq: ["$orderCutSheet.pieces.status", "Output"] },
                     { $gte: ["$orderCutSheet.pieces.updatedAt", startIST] },
-                    { $lte: ["$orderCutSheet.pieces.updatedAt", endIST] }
-                  ]
+                    { $lte: ["$orderCutSheet.pieces.updatedAt", endIST] },
+                  ],
                 },
                 1,
-                0
-              ]
-            }
-          }
-        }
+                0,
+              ],
+            },
+          },
+        },
       },
-      // Project: Transform _id (lineNumber) by removing hyphens and converting to uppercase.
       {
         $project: {
           lineNumber: {
@@ -401,25 +411,34 @@ export const ledStatus = async (req, res) => {
               $replaceAll: {
                 input: { $ifNull: ["$_id", ""] },
                 find: "-",
-                replacement: ""
-              }
-            }
+                replacement: "",
+              },
+            },
           },
           input: 1,
           output: 1,
-          _id: 0
-        }
+          _id: 0,
+        },
       },
-      // Exclude documents where lineNumber is an empty string
-      { $match: { lineNumber: { $ne: "" } } }
+      { $match: { lineNumber: { $ne: "" } } },
     ]);
 
-    // Stringify the final response data and send it.
     const jsonResponse = JSON.stringify({ data: ledStatusData });
-    res.status(200).send(jsonResponse);
+
+    // update cache
+    _cachedJson = jsonResponse;
+    _cacheTs = now;
+
+    return res.status(200).send(jsonResponse);
   } catch (error) {
-    res.status(500).send(
-      JSON.stringify({ message: "Error Getting status", error: error.message })
-    );
+    return res
+      .status(500)
+      .send(
+        JSON.stringify({
+          message: "Error Getting status",
+          error: error.message,
+        })
+      );
   }
-};
+});
+

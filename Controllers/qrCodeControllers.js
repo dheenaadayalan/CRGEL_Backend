@@ -37,14 +37,131 @@ export const qrCodeID = async (req, res) => {
   }
 };
 
+// export const trayQrCode = async (req, res) => {
+//   try {
+//     const { orderId, cutSheetQrCode, trayQrCode, status, lineNumber } =
+//       req.body;
+//     const existingOrder = await Order.findOne({
+//       "orderCutSheet.pieces.trayQrCode": trayQrCode,
+//     });
+//     if (existingOrder) {
+//       return res.status(400).json({
+//         message:
+//           "This Tray is already assigned to another Piece. Scan a different tray.",
+//         success: false,
+//         color: "yellow",
+//         h: "यह ट्रे पहले से ही दूसरे टुकड़े को सौंपी गई है। एक अलग ट्रे स्कैन करें",
+//       });
+//     }
+//     const order = await Order.findOne({ "orderCutSheet._id": orderId });
+//     if (!order) {
+//       return res.status(404).json({
+//         message: "Please Scan Cut-Sheet QR Code",
+//         success: false,
+//         color: "yellow",
+//         h: "कृपया कट-शीट क्यूआर कोड स्कैन करें",
+//       });
+//     }
+//     const orderCutSheet = order.orderCutSheet.find(
+//       (sheet) => sheet.qrCode === cutSheetQrCode
+//     );
+//     if (!orderCutSheet) {
+//       return res.status(404).json({
+//         message: "Order cut sheet not found",
+//         success: false,
+//         color: "red",
+//         h: "ऑर्डर कट शीट नहीं मिली",
+//       });
+//     }
+//     const unassignedPiece = orderCutSheet.pieces.find(
+//       (piece) => !piece.trayQrCode && piece.status !== "Output"
+//     );
+
+//     if (!unassignedPiece) {
+//       return res.status(400).json({
+//         message:
+//           "All pieces are already assigned with Tray. Scan new Cut Sheet",
+//         success: false,
+//         color: "yellow",
+//         h: "सभी टुकड़े पहले से ही ट्रे के साथ निर्दिष्ट हैं। नई कट शीट स्कैन करें",
+//       });
+//     }
+
+//     const date = new Date().toLocaleDateString("en-GB");
+//     const pieceColor = unassignedPiece.color;
+//     let pieceSize = unassignedPiece.sizes;
+
+//     if (!pieceColor || !pieceSize) {
+//       console.error("Error: pieceColor or pieceSize is undefined!");
+//       return res
+//         .status(500)
+//         .json({ message: "Invalid pieceColor or pieceSize", success: false });
+//     }
+
+//     if (pieceSize === "2XL") {
+//       pieceSize = "XXL";
+//     } else if (pieceSize === "3XL") {
+//       pieceSize = "XXXL";
+//     }
+
+//     if (!(order.inputData instanceof Map)) {
+//       order.inputData = new Map();
+//     }
+
+//     let dateData = order.inputData.get(date);
+//     if (!dateData) {
+//       dateData = { lineNumbers: new Map() };
+//     } else if (!(dateData.lineNumbers instanceof Map)) {
+//       dateData.lineNumbers = new Map(
+//         Object.entries(dateData.lineNumbers || {})
+//       );
+//     }
+
+//     let lineData = dateData.lineNumbers.get(lineNumber);
+//     if (!lineData) {
+//       lineData = { M: 0, L: 0, XL: 0, XXL: 0, XXXL: 0 };
+//     }
+
+//     lineData[pieceSize] = (lineData[pieceSize] || 0) + 1;
+
+//     dateData.lineNumbers.set(lineNumber, lineData);
+//     order.inputData.set(date, dateData);
+//     order.markModified("inputData");
+
+//     unassignedPiece.trayQrCode = trayQrCode;
+//     unassignedPiece.status = status;
+//     unassignedPiece.lineNumber = lineNumber;
+//     await order.save();
+//     res.json({
+//       message: "Tray QR code scanned successfully",
+//       success: true,
+//       unassignedPiece,
+//       color: "green",
+//       h: "ट्रे क्यूआर कोड सफलतापूर्वक स्कैन किया गया",
+//     });
+//   } catch (error) {
+//     console.error("Error assigning trayQrCode:", error);
+//     res.status(500).json({ message: "Internal Server Error", success: false });
+//   }
+// };
+
 export const trayQrCode = async (req, res) => {
+  const { orderId, cutSheetQrCode, trayQrCode, status, lineNumber } = req.body;
+
+  if (!orderId || !cutSheetQrCode || !trayQrCode || !status || !lineNumber) {
+    return res.status(400).json({
+      message: "Missing required fields.",
+      success: false,
+      color: "red",
+    });
+  }
+
   try {
-    const { orderId, cutSheetQrCode, trayQrCode, status, lineNumber } =
-      req.body;
-    const existingOrder = await Order.findOne({
+    // 1) Quick existence check — only returns a boolean, no document hydration.
+    const already = await Order.exists({
       "orderCutSheet.pieces.trayQrCode": trayQrCode,
     });
-    if (existingOrder) {
+    if (already) {
       return res.status(400).json({
         message:
           "This Tray is already assigned to another Piece. Scan a different tray.",
@@ -53,8 +170,13 @@ export const trayQrCode = async (req, res) => {
         h: "यह ट्रे पहले से ही दूसरे टुकड़े को सौंपी गई है। एक अलग ट्रे स्कैन करें",
       });
     }
-    const order = await Order.findOne({ "orderCutSheet._id": orderId });
-    if (!order) {
+
+    // 2) Pull down only the matching cut‑sheet (and its pieces) so we can identify the first unassigned piece.
+    const doc = await Order.findOne(
+      { "orderCutSheet._id": orderId },
+      { "orderCutSheet.$": 1 } // projection: only the matched cut sheet
+    ).lean();
+    if (!doc || !doc.orderCutSheet?.length) {
       return res.status(404).json({
         message: "Please Scan Cut-Sheet QR Code",
         success: false,
@@ -62,22 +184,13 @@ export const trayQrCode = async (req, res) => {
         h: "कृपया कट-शीट क्यूआर कोड स्कैन करें",
       });
     }
-    const orderCutSheet = order.orderCutSheet.find(
-      (sheet) => sheet.qrCode === cutSheetQrCode
-    );
-    if (!orderCutSheet) {
-      return res.status(404).json({
-        message: "Order cut sheet not found",
-        success: false,
-        color: "red",
-        h: "ऑर्डर कट शीट नहीं मिली",
-      });
-    }
-    const unassignedPiece = orderCutSheet.pieces.find(
-      (piece) => !piece.trayQrCode && piece.status !== "Output"
-    );
 
-    if (!unassignedPiece) {
+    const cutSheet = doc.orderCutSheet[0];
+    // Find the index of the first piece with no tray assigned and status not "Output"
+    const pieceIndex = cutSheet.pieces.findIndex(
+      (p) => p.trayQrCode == null && p.status !== "Output"
+    );
+    if (pieceIndex === -1) {
       return res.status(400).json({
         message:
           "All pieces are already assigned with Tray. Scan new Cut Sheet",
@@ -87,57 +200,60 @@ export const trayQrCode = async (req, res) => {
       });
     }
 
-    const date = new Date().toLocaleDateString("en-GB");
-    const pieceColor = unassignedPiece.color;
-    let pieceSize = unassignedPiece.sizes;
+    // Normalize the size key for your inputData map using the target piece
+    let sizeKey = cutSheet.pieces[pieceIndex].sizes;
+    if (sizeKey === "2XL") sizeKey = "XXL";
+    else if (sizeKey === "3XL") sizeKey = "XXXL";
 
-    if (!pieceColor || !pieceSize) {
-      console.error("Error: pieceColor or pieceSize is undefined!");
-      return res.status(500).json({ message: "Invalid pieceColor or pieceSize", success: false });
+    // Build the path for $inc
+    const date = new Date().toLocaleDateString("en-GB"); // Format "DD/MM/YYYY"
+    const incPath = `inputData.${date}.lineNumbers.${lineNumber}.${sizeKey}`;
+
+    // 3) Atomic update: update only the specific piece identified by the pieceIndex
+    // We use the arrayFilters to match the right cut-sheet.
+    // The piece index is hard-coded in the update path so only that one element updates.
+    const updateQuery = {
+      $set: {
+        [`orderCutSheet.$[cs].pieces.${pieceIndex}.trayQrCode`]: trayQrCode,
+        [`orderCutSheet.$[cs].pieces.${pieceIndex}.status`]: status,
+        [`orderCutSheet.$[cs].pieces.${pieceIndex}.lineNumber`]: lineNumber,
+      },
+      $inc: {
+        [incPath]: 1,
+      },
+    };
+
+    // We match the cut-sheet document using its _id and qrCode.
+    const result = await Order.updateOne(
+      { "orderCutSheet._id": orderId },
+      updateQuery,
+      {
+        arrayFilters: [{ "cs._id": orderId, "cs.qrCode": cutSheetQrCode }],
+      }
+    );
+
+    console.log(result); // Debug log to verify update outcome
+
+    if (result.matchedCount === 0 || result.modifiedCount === 0) {
+      return res.status(404).json({
+        message: "Order cut sheet or piece not found / already taken",
+        success: false,
+        color: "red",
+      });
     }
 
-    if (pieceSize === "2XL") {
-      pieceSize = "XXL";
-    } else if (pieceSize === "3XL") {
-      pieceSize = "XXXL";
-    }
-
-    if (!(order.inputData instanceof Map)) {
-      order.inputData = new Map();
-    }
-
-    let dateData = order.inputData.get(date);
-    if (!dateData) {
-      dateData = { lineNumbers: new Map() };
-    } else if (!(dateData.lineNumbers instanceof Map)) {
-      dateData.lineNumbers = new Map(Object.entries(dateData.lineNumbers || {}));
-    }
-
-    let lineData = dateData.lineNumbers.get(lineNumber);
-    if (!lineData) {
-      lineData = { M: 0, L: 0, XL: 0, XXL: 0, XXXL: 0 };
-    }
-
-    lineData[pieceSize] = (lineData[pieceSize] || 0) + 1;
-
-    dateData.lineNumbers.set(lineNumber, lineData);
-    order.inputData.set(date, dateData);
-    order.markModified("inputData");
-
-    unassignedPiece.trayQrCode = trayQrCode;
-    unassignedPiece.status = status;
-    unassignedPiece.lineNumber = lineNumber;
-    await order.save();
-    res.json({
+    return res.json({
       message: "Tray QR code scanned successfully",
       success: true,
-      unassignedPiece,
       color: "green",
       h: "ट्रे क्यूआर कोड सफलतापूर्वक स्कैन किया गया",
     });
-  } catch (error) {
-    console.error("Error assigning trayQrCode:", error);
-    res.status(500).json({ message: "Internal Server Error", success: false });
+  } catch (err) {
+    console.error("Error assigning trayQrCode:", err);
+    return res.status(500).json({
+      message: "Internal Server Error",
+      success: false,
+    });
   }
 };
 
@@ -264,6 +380,72 @@ export const signInQrCodeDevice = async (req, res) => {
   }
 };
 
+// export const updateTrayOutput = async (req, res) => {
+//   const { trayQrCode } = req.body;
+
+//   if (!trayQrCode) {
+//     return res.status(400).json({
+//       success: false,
+//       message: "Tray QR code is required.",
+//       color: "red",
+//       h: "ट्रे QR कोड आवश्यक है.",
+//     });
+//   }
+
+//   try {
+//     // Find the order containing the piece with the specified trayQrCode
+//     const order = await Order.findOne({
+//       "orderCutSheet.pieces.trayQrCode": trayQrCode,
+//     });
+
+//     if (!order) {
+//       return res.json({
+//         success: false,
+//         message: `No order or cut sheet found containing the specified tray QR code.${trayQrCode}`,
+//         color: "red",
+//         h: "निर्दिष्ट ट्रे क्यूआर कोड वाला कोई ऑर्डर या कट शीट नहीं मिली।",
+//       });
+//     }
+
+//     // Find the specific piece with the trayQrCode
+//     let foundPiece = null;
+
+//     for (const cutSheet of order.orderCutSheet) {
+//       foundPiece = cutSheet.pieces.find(
+//         (piece) => piece.trayQrCode === trayQrCode
+//       );
+//       if (foundPiece) break;
+//     }
+
+//     if (!foundPiece) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "Tray not found.",
+//       });
+//     }
+//     if (foundPiece) {
+//       foundPiece.status = "Output";
+//       foundPiece.trayQrCode = null; // Clear the trayQrCode
+//     }
+
+//     // Save the updated order
+//     await order.save();
+
+//     res.status(200).json({
+//       success: true,
+//       message: "Tray scanned updated successfully.",
+//       color: "green",
+//       h: "ट्रे स्कैन सफलतापूर्वक अपडेट किया गया।",
+//     });
+//   } catch (err) {
+//     console.error("Error updating tray status:", err);
+//     res.status(500).json({
+//       success: false,
+//       message: "An error occurred while updating the tray status.",
+//     });
+//   }
+// };
+
 export const updateTrayOutput = async (req, res) => {
   const { trayQrCode } = req.body;
 
@@ -277,12 +459,23 @@ export const updateTrayOutput = async (req, res) => {
   }
 
   try {
-    // Find the order containing the piece with the specified trayQrCode
-    const order = await Order.findOne({
-      "orderCutSheet.pieces.trayQrCode": trayQrCode,
-    });
+    const result = await Order.updateOne(
+      { "orderCutSheet.pieces.trayQrCode": trayQrCode },
+      {
+        $set: {
+          "orderCutSheet.$[cs].pieces.$[p].status": "Output",
+          "orderCutSheet.$[cs].pieces.$[p].trayQrCode": null,
+        },
+      },
+      {
+        arrayFilters: [
+          { "cs.pieces.trayQrCode": trayQrCode },
+          { "p.trayQrCode": trayQrCode },
+        ],
+      }
+    );
 
-    if (!order) {
+    if (result.matchedCount === 0) {
       return res.json({
         success: false,
         message: `No order or cut sheet found containing the specified tray QR code.${trayQrCode}`,
@@ -291,31 +484,7 @@ export const updateTrayOutput = async (req, res) => {
       });
     }
 
-    // Find the specific piece with the trayQrCode
-    let foundPiece = null;
-
-    for (const cutSheet of order.orderCutSheet) {
-      foundPiece = cutSheet.pieces.find(
-        (piece) => piece.trayQrCode === trayQrCode
-      );
-      if (foundPiece) break;
-    }
-
-    if (!foundPiece) {
-      return res.status(404).json({
-        success: false,
-        message: "Tray not found.",
-      });
-    }
-    if (foundPiece) {
-      foundPiece.status = "Output";
-      foundPiece.trayQrCode = null; // Clear the trayQrCode
-    }
-
-    // Save the updated order
-    await order.save();
-
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "Tray scanned updated successfully.",
       color: "green",
@@ -323,7 +492,7 @@ export const updateTrayOutput = async (req, res) => {
     });
   } catch (err) {
     console.error("Error updating tray status:", err);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "An error occurred while updating the tray status.",
     });
