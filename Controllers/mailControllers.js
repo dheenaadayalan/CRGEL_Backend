@@ -24,24 +24,13 @@ const formatReportAsHTML = (reportData) => {
     });
   
     // Helper: Convert 24-hour time range to a 12-hour IST time range.
-    const convert24to12 = (timeRange) => {
-      if (timeRange === "Total") return timeRange;
-      const [start, end] = timeRange.split("-");
-      const convertTime = (time) => {
-        let [hour, minute] = time.split(":").map(Number);
-        // Convert from assumed UTC to IST by adding 5 hours 30 minutes
-        hour += 5;
-        minute += 30;
-        if (minute >= 60) {
-          minute -= 60;
-          hour += 1;
-        }
-        hour = hour % 24;
-        const ampm = hour >= 12 ? "PM" : "AM";
-        const istHour = hour % 12 || 12;
-        return `${istHour}:00 ${ampm}`;
-      };
-      return `${convertTime(start)} - ${convertTime(end)}`;
+    const convert24to12 = (timeKey) => {
+      if (timeKey === "Total") return timeKey;
+      const [hourStr] = timeKey.split(":");
+      const hour = Number(hourStr);
+      const ampm = hour >= 12 ? "PM" : "AM";
+      const h12 = hour % 12 || 12;
+      return `${h12}:00 - ${h12}:59 ${ampm}`;
     };
   
     // Build table header: first column "Time Slot", then each production line as a column header.

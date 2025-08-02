@@ -14,7 +14,7 @@ const qrCodeDeviceSchema = new mongoose.Schema(
     roles: {
       type: String,
       required: true,
-      enum: ["Store", "In-Line", "Finishing", "In-Feeding","Output","Barcode"],
+      enum: ["Store", "In-Line", "Finishing", "In-Feeding","Output","Barcode","RFID","Checking","RFID-Input"],
     },
     companyId: {
       type: mongoose.Schema.Types.ObjectId,

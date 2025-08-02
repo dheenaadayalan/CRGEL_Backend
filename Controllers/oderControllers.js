@@ -2,7 +2,7 @@ import Order from "../Model/orderModel.js";
 import qrcode from "qrcode";
 import mongoose from "mongoose";
 
-const asyncHandler = fn => (req, res, next) =>
+const asyncHandler = (fn) => (req, res, next) =>
   Promise.resolve(fn(req, res, next)).catch(next);
 
 export const addNewOrder = async (req, res) => {
@@ -60,7 +60,9 @@ export const getAllOrders = async (req, res) => {
   const companyId = req.user.companyID;
   try {
     const allOrders = await Order.find({ companyId: companyId })
-      .select('_id orderNumber orderDiscription styleNumber orderQuantity totalQuantity')
+      .select(
+        "_id orderNumber orderDiscription styleNumber orderQuantity totalQuantity"
+      )
       .lean();
     res.json({
       allOrder: allOrders,
@@ -197,71 +199,99 @@ export const generateOutputProductionReport = async (req, res) => {
       throw new Error("Status is required.");
     }
 
-    // Convert input date to start of the selected day
-    const selectedDate = date ? new Date(date) : new Date();
-    const startOfDay = new Date(
-      Date.UTC(
-        selectedDate.getUTCFullYear(),
-        selectedDate.getUTCMonth(),
-        selectedDate.getUTCDate(),
-        0,
-        0,
-        0
-      )
-    );
-    const endOfDay = new Date(
-      Date.UTC(
-        selectedDate.getUTCFullYear(),
-        selectedDate.getUTCMonth(),
-        selectedDate.getUTCDate(),
-        23,
-        59,
-        59,
-        999
-      )
-    );
-
-    const orders = await Order.find({ companyId }).lean(); 
-
-    let hourlyCount = {}; 
-    let dailyCount = 0;
-
-    orders.forEach((order) => {
-      order.orderCutSheet.forEach((cutSheet) => {
-        cutSheet.pieces.forEach((piece) => {
-          if (piece.status === status && piece.lineNumber) {
-            const updatedAt = new Date(piece.updatedAt);
-            if (updatedAt >= startOfDay && updatedAt <= endOfDay) {
-              const hour = updatedAt.getUTCHours();
-              const hourRange = `${hour}:00-${hour}:59`;
-              const line = piece.lineNumber;
-              if (!hourlyCount[line]) {
-                hourlyCount[line] = {};
-              }
-              if (!hourlyCount[line][hourRange]) {
-                hourlyCount[line][hourRange] = 0;
-              }
-              hourlyCount[line][hourRange]++;
-              dailyCount++;
-            }
-          }
-        });
+    let year, month, day;
+    if (date) {
+      [year, month, day] = date.split("-").map(Number);
+    } else {
+      const istDate = new Date().toLocaleDateString("en-CA", {
+        timeZone: "Asia/Kolkata",
       });
+      [year, month, day] = istDate.split("-").map(Number);
+    }
+    month -= 1;
+    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+    const utcMidnight = Date.UTC(year, month, day);
+    const startOfDayUTC = utcMidnight - IST_OFFSET_MS;
+    const endOfDayUTC = startOfDayUTC + 24 * 60 * 60 * 1000 - 1;
+
+    const startDate = new Date(startOfDayUTC);
+    const endDate = new Date(endOfDayUTC);
+
+    const agg = await Order.aggregate([
+      { $match: { companyId: new mongoose.Types.ObjectId(companyId) } },
+      { $unwind: "$orderCutSheet" },
+      { $unwind: "$orderCutSheet.pieces" },
+      {
+        $match: {
+          "orderCutSheet.pieces.status": status,
+          "orderCutSheet.pieces.updatedAt": { $gte: startDate, $lte: endDate },
+        },
+      },
+
+      {
+        $addFields: {
+          istMs: {
+            $add: [
+              { $toLong: "$orderCutSheet.pieces.updatedAt" },
+              IST_OFFSET_MS,
+            ],
+          },
+        },
+      },
+      {
+        $addFields: {
+          istDate: { $toDate: "$istMs" },
+        },
+      },
+      {
+        $project: {
+          line: "$orderCutSheet.pieces.lineNumber",
+          hour: { $hour: "$istDate" },
+        },
+      },
+
+      {
+        $group: {
+          _id: { line: "$line", hour: "$hour" },
+          count: { $sum: 1 },
+        },
+      },
+      {
+        $group: {
+          _id: "$_id.line",
+          slots: {
+            $push: {
+              k: { $concat: [{ $toString: "$_id.hour" }, ":00"] },
+              v: "$count",
+            },
+          },
+          total: { $sum: "$count" },
+        },
+      },
+
+      {
+        $project: {
+          line: "$_id",
+          hourlyCount: { $arrayToObject: "$slots" },
+          total: 1,
+          _id: 0,
+        },
+      },
+    ]);
+
+    const hourlyCount = {};
+    let dailyCount = 0;
+    agg.forEach(({ line, hourlyCount: hc, total }) => {
+      hourlyCount[line] = { ...hc, Total: total };
+      dailyCount += total;
     });
 
-    Object.keys(hourlyCount).forEach((line) => {
-      const total = Object.values(hourlyCount[line]).reduce(
-        (sum, count) => sum + count,
-        0
-      );
-      hourlyCount[line]["Total"] = total;
-    });
-    res
+    return res
       .status(201)
       .json({ message: "Production Report", hourlyCount, dailyCount });
   } catch (error) {
     console.error("Error fetching output count:", error);
-    res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: error.message });
   }
 };
 
@@ -348,16 +378,104 @@ export const deleteOrderCutSheet = async (req, res) => {
       return res.status(404).json({ message: "Order not found" });
     }
 
-    res.status(200).json({ message: "Cut sheet deleted successfully", updatedOrder });
+    res
+      .status(200)
+      .json({ message: "Cut sheet deleted successfully", updatedOrder });
   } catch (error) {
-    res.status(500).json({ message: "Error deleting cut sheet", error: error.message });
+    res
+      .status(500)
+      .json({ message: "Error deleting cut sheet", error: error.message });
   }
 };
-
 
 // simple in‐memory cache
 let _cachedJson = null;
 let _cacheTs = 0; // timestamp in ms
+
+// export const ledStatus = asyncHandler(async (req, res) => {
+//   try {
+//     const now = Date.now();
+
+//     // if we have cached data that's younger than 5 minutes, return it
+//     if (_cachedJson && now - _cacheTs < 5 * 60 * 1000) {
+//       return res.status(200).send(_cachedJson);
+//     }
+
+//     // otherwise recompute and update cache
+//     const jsNow = new Date(now);
+//     const istDateStr = new Intl.DateTimeFormat("en-CA", {
+//       timeZone: "Asia/Kolkata",
+//     }).format(jsNow);
+//     const startIST = new Date(`${istDateStr}T00:00:00+05:30`);
+//     const endIST = new Date(`${istDateStr}T23:59:59.999+05:30`);
+
+//     const ledStatusData = await Order.aggregate([
+//       { $unwind: "$orderCutSheet" },
+//       { $unwind: "$orderCutSheet.pieces" },
+//       {
+//         $group: {
+//           _id: "$orderCutSheet.pieces.lineNumber",
+//           input: {
+//             $sum: {
+//               $cond: [
+//                 { $eq: ["$orderCutSheet.pieces.status", "In-Line"] },
+//                 1,
+//                 0,
+//               ],
+//             },
+//           },
+//           output: {
+//             $sum: {
+//               $cond: [
+//                 {
+//                   $and: [
+//                     { $eq: ["$orderCutSheet.pieces.status", "Output"] },
+//                     { $gte: ["$orderCutSheet.pieces.updatedAt", startIST] },
+//                     { $lte: ["$orderCutSheet.pieces.updatedAt", endIST] },
+//                   ],
+//                 },
+//                 1,
+//                 0,
+//               ],
+//             },
+//           },
+//         },
+//       },
+//       {
+//         $project: {
+//           lineNumber: {
+//             $toUpper: {
+//               $replaceAll: {
+//                 input: { $ifNull: ["$_id", ""] },
+//                 find: "-",
+//                 replacement: "",
+//               },
+//             },
+//           },
+//           input: 1,
+//           output: 1,
+//           _id: 0,
+//         },
+//       },
+//       { $match: { lineNumber: { $ne: "" } } },
+//     ]);
+
+//     const jsonResponse = JSON.stringify({ data: ledStatusData });
+
+//     // update cache
+//     _cachedJson = jsonResponse;
+//     _cacheTs = now;
+
+//     return res.status(200).send(jsonResponse);
+//   } catch (error) {
+//     return res.status(500).send(
+//       JSON.stringify({
+//         message: "Error Getting status",
+//         error: error.message,
+//       })
+//     );
+//   }
+// });
 
 export const ledStatus = asyncHandler(async (req, res) => {
   try {
@@ -381,10 +499,22 @@ export const ledStatus = asyncHandler(async (req, res) => {
       { $unwind: "$orderCutSheet.pieces" },
       {
         $group: {
-          _id: "$orderCutSheet.pieces.lineNumber",
+          _id: {
+            $cond: [
+              {
+                $in: ["$orderCutSheet.pieces.lineNumber", ["Line-3", "Line-4"]],
+              },
+              "Line-5",
+              "$orderCutSheet.pieces.lineNumber",
+            ],
+          },
           input: {
             $sum: {
-              $cond: [{ $eq: ["$orderCutSheet.pieces.status", "In-Line"] }, 1, 0],
+              $cond: [
+                { $eq: ["$orderCutSheet.pieces.status", "In-Line"] },
+                1,
+                0,
+              ],
             },
           },
           output: {
@@ -431,14 +561,11 @@ export const ledStatus = asyncHandler(async (req, res) => {
 
     return res.status(200).send(jsonResponse);
   } catch (error) {
-    return res
-      .status(500)
-      .send(
-        JSON.stringify({
-          message: "Error Getting status",
-          error: error.message,
-        })
-      );
+    return res.status(500).send(
+      JSON.stringify({
+        message: "Error Getting status",
+        error: error.message,
+      })
+    );
   }
 });
-
